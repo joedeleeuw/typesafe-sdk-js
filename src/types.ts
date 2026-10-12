@@ -140,6 +140,18 @@ export interface RankItem<T extends ChoiceCriteria = ChoiceCriteria> {
   readonly score: number;
 }
 
+/** One compared pair of a RankResponse, in the order the pairs were played. */
+export interface RankDuelOutcome<T extends ChoiceCriteria = ChoiceCriteria> {
+  /** The label of the pair's item that came first in the Rank's criteria. */
+  readonly first: keyof T & string;
+  /** The label of the pair's other item. */
+  readonly second: keyof T & string;
+  /** Recorded probability that `first` beats `second`, averaged over both option orders. */
+  readonly first_wins: number;
+  /** This pair's 1 − |P(first wins | first listed first) − P(first wins | second listed first)|. */
+  readonly position_consistency: number;
+}
+
 /** An order over items fitted from pairwise duels. */
 export interface RankResponse<T extends ChoiceCriteria = ChoiceCriteria> {
   readonly type: "rank";
@@ -149,6 +161,8 @@ export interface RankResponse<T extends ChoiceCriteria = ChoiceCriteria> {
   readonly duels: number;
   /** Mean over pairs of 1 − |P(a wins | a first) − P(a wins | b first)|. */
   readonly position_consistency: number;
+  /** Every compared pair in the order played, with its recorded outcome and position consistency. */
+  readonly duel_outcomes: readonly RankDuelOutcome<T>[];
 }
 
 /** The answer type for a question, preserving its criteria keys. */

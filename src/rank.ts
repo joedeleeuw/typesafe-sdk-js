@@ -143,6 +143,28 @@ const uncertainRound = (
   return candidates.slice(0, Math.min(n, budget)).map((c) => c.pair);
 };
 
+/**
+ * Up to `n` unplayed pairs with exactly one item in the separated group, in ascending index order:
+ * the only duels that can make a finite positive fit exist.
+ */
+const crossingRound = (
+  n: number,
+  separated: readonly number[],
+  played: ReadonlySet<string>,
+  budget: number,
+): Pair[] => {
+  const inside = new Set(separated);
+  const pairs: Pair[] = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (played.has(pairKey(i, j))) continue;
+      if (inside.has(i) === inside.has(j)) continue;
+      pairs.push([i, j]);
+    }
+  }
+  return pairs.slice(0, Math.min(n, budget));
+};
+
 // ---------------------------------------------------------------------------
 // Fit
 // ---------------------------------------------------------------------------
@@ -269,7 +291,7 @@ export class RankSession {
   readonly #budget: number;
   readonly #outcomes: Outcome[] = [];
   readonly #played = new Set<string>();
-  #consistency = 0;
+  readonly #consistencies: number[] = [];
   #pending: { pair: Pair; ab: string; ba: string }[] = [];
 
   /** Expects a question that passed `validateRank`. */
@@ -299,7 +321,11 @@ export class RankSession {
    * The next round's duels, both orders of each pair, or none once the budget is spent.
    *
    * Without `max_duels` round 1 plays every pair. With it, round 1 is a seeded cycle and each later
-   * round plays the most uncertain unplayed pairs under the current fit.
+   * round plays the most uncertain unplayed pairs under the current fit. While a group of items is
+   * separated (it lost every duel against the rest with certainty, so no finite positive fit exists),
+   * a later round instead plays the unplayed pairs crossing into that group in ascending index order,
+   * the only duels that can make the fit exist; with no such pair left it schedules nothing and the
+   * answer throws the separation error.
    *
    * @param prefix - Id prefix that no caller question id starts with.
    */
@@ -309,7 +335,11 @@ export class RankSession {
     if (remaining <= 0) return [];
     let pairs: Pair[];
     if (this.#played.size > 0) {
-      pairs = uncertainRound(fitBradleyTerry(n, this.#outcomes), this.#played, remaining);
+      const separated = separatedItems(n, this.#outcomes);
+      pairs =
+        separated.length > 0
+          ? crossingRound(n, separated, this.#played, remaining)
+          : uncertainRound(fitBradleyTerry(n, this.#outcomes), this.#played, remaining);
     } else if (this.#question.max_duels === undefined || this.#question.max_duels === null) {
       pairs = [];
       for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
@@ -338,7 +368,7 @@ export class RankSession {
       const first = winProbability(answers.get(ab), a, b, this.#name);
       const second = winProbability(answers.get(ba), a, b, this.#name);
       this.#outcomes.push({ i: pair[0], j: pair[1], win: (first + second) / 2 });
-      this.#consistency = this.#consistency + (1 - Math.abs(first - second));
+      this.#consistencies.push(1 - Math.abs(first - second));
       this.#played.add(pairKey(...pair));
     }
     this.#pending = [];
@@ -366,11 +396,19 @@ export class RankSession {
         score: (strengths[i] as number) / best,
       }))
       .sort((x, y) => y.score - x.score);
+    let consistency = 0;
+    for (const value of this.#consistencies) consistency = consistency + value;
     return {
       type: "rank",
       ranking,
       duels: this.#played.size,
-      position_consistency: this.#consistency / this.#played.size,
+      position_consistency: consistency / this.#played.size,
+      duel_outcomes: this.#outcomes.map(({ i, j, win }, k) => ({
+        first: this.#labels[i] as keyof T & string,
+        second: this.#labels[j] as keyof T & string,
+        first_wins: win,
+        position_consistency: this.#consistencies[k] as number,
+      })),
     };
   }
 }

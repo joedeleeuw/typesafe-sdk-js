@@ -4,9 +4,13 @@
 
 ### Features
 
-- add the `rank` question, which orders items by pairwise Choice duels in both option orders fitted with Bradley–Terry, answering with `RankResponse` (`ranking`, `duels`, `position_consistency`)
+- add the `rank` question, which orders items by pairwise Choice duels in both option orders fitted with Bradley–Terry, answering with `RankResponse` (`ranking`, `duels`, `duel_outcomes`, `position_consistency`)
 - add `RankIncompleteError`, raised when a request for a Rank question fails, carrying the usage of the requests that succeeded
 - add `RankSeparationError`, raised before scoring when a group of a Rank's items lost every duel against the other items with certainty, so no Bradley–Terry fit with finite positive strengths exists
+
+### Bug fixes
+
+- schedule a Rank's later rounds from the actual outcomes: while a group of items is separated (no finite positive Bradley–Terry fit exists), rounds play the unplayed pairs crossing into that group instead of consuming a nonexistent fit
 
 ## v0.6.0 (2026-09-15)
 

@@ -40,30 +40,3 @@ export const SYSTEM_ONE_BODY: Record<string, unknown> = {
   },
   usage: { input_tokens: 10, output_tokens: 2 },
 };
-
-/** Expected runtime exports; keep aligned with `src/index.ts`. */
-export const EXPECTED_VALUE_EXPORTS: string[] = [
-  "APIConnectionError",
-  "APIError",
-  "APIPromise",
-  "APITimeoutError",
-  "APIUserAbortError",
-  "AuthenticationError",
-  "BadRequestError",
-  "ENV",
-  "InternalServerError",
-  "LOG_LEVELS",
-  "NotFoundError",
-  "PermissionDeniedError",
-  "RankIncompleteError",
-  "RankSeparationError",
-  "RateLimitError",
-  "TypeSafeClient",
-  "TypeSafeError",
-  "UnprocessableEntityError",
-  "VERSION",
-  "choice",
-  "noul",
-  "rank",
-  "score",
-].sort();

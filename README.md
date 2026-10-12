@@ -53,12 +53,13 @@ const { answers, usage } = await client.systemOne({
 
 answers.best.ranking; // [{ label: "p2", score: 1 }, { label: "p1", score: 0.31 }, …]
 answers.best.duels; // pairs played
+answers.best.duel_outcomes; // each pair in the order played: first, second, first_wins, position_consistency
 answers.best.position_consistency; // mean 1 − |P(a wins | a first) − P(a wins | b first)|
 ```
 
 - `instructions` are required. `criteria` maps 2 to 255 labels to descriptions, like Choice options. Labels must not be integers such as `"3"`, because JavaScript objects reorder integer keys.
 - `score` is the item's Bradley–Terry strength divided by the winner's: the winner scores exactly 1, and P(item beats the winner) = score / (1 + score). Ties keep input order.
-- The third argument, `maxDuels`, sets the number of pairs played. `null` plays every pair in one round. A number must be an integer from the item count minus one to the number of pairs. Round 1 then plays a cycle over a shuffle seeded by the sorted labels, and each later round plays up to n unplayed pairs whose outcome is most uncertain under the current fit.
+- The third argument, `maxDuels`, sets the number of pairs played. `null` plays every pair in one round. A number must be an integer from the item count minus one to the number of pairs. Round 1 then plays a cycle over a shuffle seeded by the sorted labels, and each later round plays up to n unplayed pairs whose outcome is most uncertain under the current fit; while a group of items is separated (it lost every duel against the rest with certainty, so no fit exists), later rounds instead play the unplayed pairs crossing into that group, the only duels that can restore a fit.
 - Duels share requests with your other questions. Each round is packed into as few requests as the API's limits allow: 64,000 for the state plus all of a request's questions, and 32,000 for the state plus any one question. Sizes are counted in UTF-8 bytes of compact JSON, which bounds tokens whenever every token covers at least one byte. A question, or a Rank's largest possible duel, that cannot fit is rejected before anything is sent.
 - `usage` sums every request. If a request fails, the call rejects with `RankIncompleteError` after the round's other requests settle. Its `usage` covers every request that succeeded, and its `cause` is the first failure.
 - If a group of items lost every duel against the other items with certainty, no Bradley–Terry fit with finite positive strengths exists, and the call rejects with `RankSeparationError` naming the question (`questionName`) and that group (`labels`) instead of returning zero scores.

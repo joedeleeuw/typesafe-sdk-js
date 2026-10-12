@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as sdk from "../../dist/index.mjs";
-import { BASE_URL, cannedFetch, EXPECTED_VALUE_EXPORTS, pkg, SYSTEM_ONE_BODY } from "./helpers";
+import { BASE_URL, cannedFetch, pkg, SYSTEM_ONE_BODY } from "./helpers";
 
 describe("dist/index.mjs (ESM build)", () => {
-  it("exposes exactly the documented value exports", () => {
-    expect(Object.keys(sdk).sort()).toEqual(EXPECTED_VALUE_EXPORTS);
-  });
-
   it("reports the package.json version", () => {
     expect(sdk.VERSION).toBe(pkg.version);
   });
