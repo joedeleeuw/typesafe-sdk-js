@@ -6,6 +6,7 @@
 
 - add the `rank` question, which orders items by pairwise Choice duels in both option orders fitted with Bradley–Terry, answering with `RankResponse` (`ranking`, `duels`, `position_consistency`)
 - add `RankIncompleteError`, raised when a request for a Rank question fails, carrying the usage of the requests that succeeded
+- add `RankSeparationError`, raised before scoring when a group of a Rank's items lost every duel against the other items with certainty, so no Bradley–Terry fit with finite positive strengths exists
 
 ## v0.6.0 (2026-09-15)
 

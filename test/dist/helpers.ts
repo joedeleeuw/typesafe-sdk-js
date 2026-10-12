@@ -56,6 +56,7 @@ export const EXPECTED_VALUE_EXPORTS: string[] = [
   "NotFoundError",
   "PermissionDeniedError",
   "RankIncompleteError",
+  "RankSeparationError",
   "RateLimitError",
   "TypeSafeClient",
   "TypeSafeError",

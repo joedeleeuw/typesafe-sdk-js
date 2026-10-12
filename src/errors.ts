@@ -141,3 +141,24 @@ export class RankIncompleteError extends TypeSafeError {
     this.usage = usage;
   }
 }
+
+/**
+ * A Rank question's duels admit no Bradley–Terry fit with finite positive strengths. A group of
+ * items lost every duel against the other items with certainty, so the maximum-likelihood strengths
+ * of that group are zero and no score or log-strength of the ranking is defined.
+ */
+export class RankSeparationError extends TypeSafeError {
+  /** The name of the Rank question in the call's questions. */
+  readonly questionName: string;
+  /** The separated items in input order: each lost every duel against every item outside this group. */
+  readonly labels: readonly string[];
+
+  constructor(questionName: string, labels: readonly string[]) {
+    super(
+      `Rank question "${questionName}" has no Bradley–Terry fit with finite positive strengths: ` +
+        `${labels.map((label) => `"${label}"`).join(", ")} lost every duel against the other items with certainty.`,
+    );
+    this.questionName = questionName;
+    this.labels = labels;
+  }
+}

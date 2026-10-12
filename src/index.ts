@@ -12,6 +12,7 @@ export {
   NotFoundError,
   PermissionDeniedError,
   RankIncompleteError,
+  RankSeparationError,
   RateLimitError,
   TypeSafeError,
   UnprocessableEntityError,

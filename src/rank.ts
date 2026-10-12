@@ -1,4 +1,4 @@
-import { TypeSafeError } from "./errors";
+import { RankSeparationError, TypeSafeError } from "./errors";
 import type {
   ChoiceCriteria,
   ChoiceQuestion,
@@ -196,6 +196,50 @@ const fitBradleyTerry = (n: number, outcomes: readonly Outcome[]): number[] => {
   );
 };
 
+/** Which items the first item reaches along `edges`, where `edges[i]` lists the items `i` points to. */
+const reachedFromFirst = (edges: readonly (readonly number[])[]): boolean[] => {
+  const reached = new Array<boolean>(edges.length).fill(false);
+  reached[0] = true;
+  const frontier = [0];
+  for (let source = frontier.pop(); source !== undefined; source = frontier.pop()) {
+    for (const target of edges[source] as readonly number[]) {
+      if (reached[target]) continue;
+      reached[target] = true;
+      frontier.push(target);
+    }
+  }
+  return reached;
+};
+
+/**
+ * A group of items that lost every duel against the items outside it with certainty, in input order.
+ *
+ * An item beats another when it won their duel with positive probability. A finite positive
+ * Bradley–Terry fit exists exactly when every item beats its way to every other item (Ford 1957,
+ * Hunter 2004). Otherwise either the first item and the items it beats its way to, or the items that
+ * cannot beat their way to the first item, never beat any item outside their group. Empty when the
+ * fit exists.
+ */
+const separatedItems = (n: number, outcomes: readonly Outcome[]): number[] => {
+  const beats = Array.from({ length: n }, (): number[] => []);
+  const beatenBy = Array.from({ length: n }, (): number[] => []);
+  for (const { i, j, win } of outcomes) {
+    if (win > 0) {
+      (beats[i] as number[]).push(j);
+      (beatenBy[j] as number[]).push(i);
+    }
+    if (win < 1) {
+      (beats[j] as number[]).push(i);
+      (beatenBy[i] as number[]).push(j);
+    }
+  }
+  const items = Array.from({ length: n }, (_, k) => k);
+  const beatenFromFirst = reachedFromFirst(beats);
+  if (beatenFromFirst.includes(false)) return items.filter((k) => beatenFromFirst[k]);
+  const beatingFirst = reachedFromFirst(beatenBy);
+  return items.filter((k) => !beatingFirst[k]);
+};
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
@@ -300,8 +344,19 @@ export class RankSession {
     this.#pending = [];
   }
 
-  /** The fitted ranking, best first, with Luce odds against the winner as scores. */
+  /**
+   * The fitted ranking, best first, with Luce odds against the winner as scores.
+   *
+   * @throws {RankSeparationError} A group of items lost every duel against the other items with certainty.
+   */
   answer<T extends ChoiceCriteria>(): RankResponse<T> {
+    const separated = separatedItems(this.#labels.length, this.#outcomes);
+    if (separated.length > 0) {
+      throw new RankSeparationError(
+        this.#name,
+        separated.map((k) => this.#labels[k] as string),
+      );
+    }
     const strengths = fitBradleyTerry(this.#labels.length, this.#outcomes);
     let best = 0;
     for (const s of strengths) best = Math.max(best, s);

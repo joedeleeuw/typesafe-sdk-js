@@ -306,6 +306,8 @@ export class TypeSafeClient {
    * @returns Answers typed by question name and criteria, with model and token usage.
    * @throws {TypeSafeError} Questions are empty, score criteria are not a list of at least two
    *   entries, or a Rank question has invalid items or `max_duels`.
+   * @throws {RankSeparationError} A group of a Rank's items lost every duel against the other items
+   *   with certainty, so the Bradley–Terry fit has no finite positive strengths.
    * @throws {APIError} The server returns a non-2xx response after retries.
    * @throws {APIConnectionError} The request cannot connect or times out after retries.
    * @throws {APIUserAbortError} The caller aborts the request.
@@ -343,6 +345,7 @@ export class TypeSafeClient {
    *
    * @throws {TypeSafeError} A question, or a Rank's largest duel, cannot fit in a request with the state.
    * @throws {RankIncompleteError} A request failed; carries the usage of every request that succeeded.
+   * @throws {RankSeparationError} A group of a Rank's items lost every duel against the other items with certainty.
    */
   #systemOneRanked<Q extends Questions>(
     request: SystemOneRequest<Q>,

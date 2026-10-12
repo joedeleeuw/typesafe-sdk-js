@@ -6,6 +6,7 @@ This is `joedeleeuw/typesafe-sdk-js`, our fork of `typesafe-ai/typesafe-sdk-js` 
 
 - The `rank` question (`RankQuestion`, `RankResponse`, `RankItem`). The client expands each Rank into pairwise Choice duels, asked in both option orders, fits Bradley–Terry strengths by MM, and returns `ranking`, `duels` and `position_consistency`. Rank never reaches the API as its own type.
 - Scheduling, fitting, validation and request packing live in `src/rank.ts`. `src/client.ts` (`systemOne`) runs the rounds.
+- Before fitting the final ranking, `separatedItems` checks that every item beats its way to every other item through duels won with positive probability; otherwise the Bradley–Terry MLE has zero strengths and `RankSession.answer` throws `RankSeparationError`. Scheduling rounds still fit without the check.
 - The semantics match the Python fork `joedeleeuw/typesafe-sdk-python` bit for bit. Both forks share the same validation messages, the same seeded round-1 cycle for an explicit `max_duels` (FNV-1a over the code-point-sorted labels, then mulberry32 and Fisher–Yates), and the same p(1−p) later rounds. The fit uses the same operations in the same order, with plain left-to-right sums: Python's `sum()` is compensated, so the Python fork must not use it there. Duel ids, packing limits and field names also match. Change both forks together, and check them by driving both SDKs' sessions with the same recorded duel probabilities and comparing the IEEE-754 bits.
 
 ## Remotes and upstream releases
