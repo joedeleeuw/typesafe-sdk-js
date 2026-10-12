@@ -62,5 +62,6 @@ export const EXPECTED_VALUE_EXPORTS: string[] = [
   "VERSION",
   "choice",
   "noul",
+  "rank",
   "score",
 ].sort();

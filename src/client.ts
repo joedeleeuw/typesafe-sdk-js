@@ -15,6 +15,7 @@ import {
   withLevel,
 } from "./logging";
 import { validateQuestions } from "./questions";
+import { duelPrefix, packQuestions, RankSession } from "./rank";
 import { Models } from "./resources/models";
 import {
   DEFAULT_RETRY_POLICY,
@@ -29,12 +30,15 @@ import type {
   Logger,
   LogLevel,
   Questions,
+  RankQuestion,
   RequestOptions,
   RetryPolicy,
   SystemOneRequest,
   SystemOneRequestPayload,
   SystemOneResult,
   TypeSafeClientConfig,
+  Usage,
+  WireQuestion,
 } from "./types";
 import { VERSION } from "./version";
 
@@ -291,10 +295,16 @@ export class TypeSafeClient {
   /**
    * Answer named questions about text or structured state.
    *
+   * Rank questions are expanded into pairwise Choice duels, asked in both option orders over the
+   * same state together with the other questions, in as few requests per round as the token limit
+   * allows; usage is summed over those requests. With Rank questions, `asResponse()` and
+   * `withResponse()` expose the last request's response, whose body has already been parsed.
+   *
    * @param request - State, questions, and an optional model override.
    * @param options - Per-call timeout, retry, headers, and cancellation settings.
    * @returns Answers typed by question name and criteria, with model and token usage.
-   * @throws {TypeSafeError} Questions are empty, or score criteria are not a list of at least two entries.
+   * @throws {TypeSafeError} Questions are empty, score criteria are not a list of at least two
+   *   entries, or a Rank question has invalid items or `max_duels`.
    * @throws {APIError} The server returns a non-2xx response after retries.
    * @throws {APIConnectionError} The request cannot connect or times out after retries.
    * @throws {APIUserAbortError} The caller aborts the request.
@@ -313,15 +323,84 @@ export class TypeSafeClient {
     options: RequestOptions = {},
   ): APIPromise<SystemOneResult<Q>> {
     validateQuestions(request.questions);
-    const body = {
-      ...request,
-      model: request.model ?? this.defaultModel,
-    } satisfies SystemOneRequestPayload;
+    const model = request.model ?? this.defaultModel;
+    const entries = Object.entries(request.questions);
+    if (entries.some(([, question]) => question.type === "rank")) {
+      return this.#systemOneRanked(request, model, entries, options);
+    }
+    // No Rank questions: every question is a wire question, sent as given.
+    const body = { ...request, model } as SystemOneRequestPayload;
 
     return this.#request<SystemOneResult<Q>>("POST", "/v1/systemone", {
       ...options,
       body,
     });
+  }
+
+  /** Play every Rank question's duels round by round, then answer in the caller's question order. */
+  #systemOneRanked<Q extends Questions>(
+    request: SystemOneRequest<Q>,
+    model: string,
+    entries: [string, Questions[string]][],
+    options: RequestOptions,
+  ): APIPromise<SystemOneResult<Q>> {
+    const wire = entries.filter(
+      (entry): entry is [string, WireQuestion] => entry[1].type !== "rank",
+    );
+    const sessions = entries
+      .filter((entry): entry is [string, RankQuestion] => entry[1].type === "rank")
+      .map(([name, question]) => [name, new RankSession(name, question)] as const);
+    const prefix = duelPrefix(wire.map(([name]) => name));
+
+    const run = async (): Promise<{ result: SystemOneResult<Q>; response: Response }> => {
+      const answers = new Map<string, unknown>();
+      const usage = { input_tokens: 0, output_tokens: 0 };
+      let resolvedModel: string | undefined;
+      let last: Response | undefined;
+      let round: (readonly [string, WireQuestion])[] = [...wire];
+      for (;;) {
+        for (const [, session] of sessions) {
+          for (const duel of session.nextDuels(prefix)) round.push([duel.id, duel.question]);
+        }
+        if (round.length === 0) break;
+        const replies = await Promise.all(
+          packQuestions(request.state, round).map((batch) =>
+            this.#request<SystemOneResult<Questions>>("POST", "/v1/systemone", {
+              ...options,
+              body: {
+                ...request,
+                model,
+                questions: Object.fromEntries(batch),
+              } satisfies SystemOneRequestPayload,
+            }).withResponse(),
+          ),
+        );
+        for (const { data, response } of replies) {
+          for (const [id, answer] of Object.entries(data.answers)) answers.set(id, answer);
+          usage.input_tokens += data.usage.input_tokens;
+          usage.output_tokens += data.usage.output_tokens;
+          resolvedModel ??= data.model;
+          last = response;
+        }
+        for (const [, session] of sessions) session.record(answers);
+        round = [];
+      }
+      const ranked = new Map(sessions.map(([name, session]) => [name, session.answer()]));
+      const result = {
+        model: resolvedModel as string,
+        answers: Object.fromEntries(
+          entries.map(([name]) => [name, ranked.get(name) ?? answers.get(name)]),
+        ) as SystemOneResult<Q>["answers"],
+        usage: usage satisfies Usage,
+      };
+      return { result, response: last as Response };
+    };
+
+    const outcome = run();
+    return new APIPromise(
+      outcome.then(({ response }) => response),
+      () => outcome.then(({ result }) => result),
+    );
   }
 
   /** Send a request and parse its response body. */

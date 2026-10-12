@@ -18,4 +18,4 @@ This is `joedeleeuw/typesafe-sdk-js`, our fork of `typesafe-ai/typesafe-sdk-js` 
 
 - Gate: `npm run lint`, `npm run typecheck`, `npx vitest run`, `npm run build && npm run test:dist`.
 - `test/dist/helpers.ts` `EXPECTED_VALUE_EXPORTS` must list every runtime export, including `rank`.
-- Commits use conventional commit messages, with no AI trailers.
+- Commits use conventional commit messages, with no AI trailers. `.pre-commit-config.yaml` (from `project-init`) is the fork's own commit gate; upstream has none.

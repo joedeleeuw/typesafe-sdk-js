@@ -16,7 +16,7 @@ export {
   UnprocessableEntityError,
 } from "./errors";
 export { LOG_LEVELS } from "./logging";
-export { choice, noul, score } from "./questions";
+export { choice, noul, rank, score } from "./questions";
 export type { Models } from "./resources/models";
 export type * from "./types";
 export { VERSION } from "./version";

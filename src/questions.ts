@@ -1,10 +1,12 @@
 import { TypeSafeError } from "./errors";
+import { validateRank } from "./rank";
 import type {
   ChoiceCriteria,
   ChoiceQuestion,
   EntryType,
   NoulQuestion,
   Questions,
+  RankQuestion,
   ScoreCriteria,
   ScoreQuestion,
 } from "./types";
@@ -62,16 +64,35 @@ export const choice = <const T extends ChoiceCriteria>(
   return { type: "choice", instructions, criteria };
 };
 
+/**
+ * Create a question that orders items by pairwise duels, fitted with Bradley–Terry.
+ *
+ * @param instructions - What makes one item better, as text, a JSON object or array, or `null`.
+ * @param criteria - 2 to 255 non-integer labels mapped to descriptions, or `null` for undescribed items.
+ * @param maxDuels - Pairs to play; `null` plays every pair, otherwise at least one fewer than the items.
+ */
+export const rank = <const T extends ChoiceCriteria>(
+  instructions: EntryType,
+  criteria: T,
+  maxDuels: number | null = null,
+): RankQuestion<T> => {
+  if (Array.isArray(criteria)) {
+    throw new TypeSafeError("Rank criteria must be a map of labels to descriptions, not a list.");
+  }
+  return { type: "rank", instructions, criteria, max_duels: maxDuels };
+};
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
-/** Reject empty question sets and score questions without a list of at least two criteria. */
+/** Reject empty question sets, malformed score questions, and Rank questions that cannot be scheduled. */
 export const validateQuestions = (questions: Questions): void => {
   if (Object.keys(questions).length === 0) {
     throw new TypeSafeError("At least one question is required.");
   }
   for (const [name, question] of Object.entries(questions)) {
+    if (question.type === "rank") validateRank(name, question);
     if (question.type !== "score") continue;
     if (!Array.isArray(question.criteria)) {
       throw new TypeSafeError(

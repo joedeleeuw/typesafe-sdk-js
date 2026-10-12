@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (fork)
+
+### Features
+
+- add the `rank` question, which orders items by pairwise Choice duels in both option orders fitted with Bradley–Terry, answering with `RankResponse` (`ranking`, `duels`, `position_consistency`)
+
 ## v0.6.0 (2026-09-15)
 
 ### Breaking changes

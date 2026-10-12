@@ -57,8 +57,26 @@ export interface ScoreQuestion<T extends ScoreCriteria = ScoreCriteria> {
   criteria: T;
 }
 
+/**
+ * A question that orders named items by pairwise Choice duels fitted with Bradley–Terry.
+ *
+ * The client expands it into duels before sending; it never reaches the API as its own type.
+ */
+export interface RankQuestion<T extends ChoiceCriteria = ChoiceCriteria> {
+  type: "rank";
+  /** What makes one item better than another, as text, a JSON object, or an array. */
+  instructions?: EntryType;
+  /** The items to order: 2 to 255 labels mapped to descriptions; labels must not be integers. */
+  criteria: T;
+  /** Pairs to play; omitted or `null` plays every pair, otherwise at least one fewer than the items. */
+  max_duels?: number | null;
+}
+
 /** A question identified by its `type` field. */
-export type Question = NoulQuestion | ScoreQuestion | ChoiceQuestion;
+export type Question = NoulQuestion | ScoreQuestion | ChoiceQuestion | RankQuestion;
+
+/** A question type the API answers directly. */
+export type WireQuestion = NoulQuestion | ScoreQuestion | ChoiceQuestion;
 
 /** Questions keyed by the names used to identify their answers. */
 export interface Questions {
@@ -114,6 +132,25 @@ export interface ScoreResponse<T extends ScoreCriteria = ScoreCriteria> {
   };
 }
 
+/** A ranked item and its Luce odds against the winner, from zero to one. */
+export interface RankItem<T extends ChoiceCriteria = ChoiceCriteria> {
+  /** The item's label. */
+  readonly label: keyof T & string;
+  /** Strength relative to the winner; the winner scores 1 and P(beats the winner) = score / (1 + score). */
+  readonly score: number;
+}
+
+/** An order over items fitted from pairwise duels. */
+export interface RankResponse<T extends ChoiceCriteria = ChoiceCriteria> {
+  readonly type: "rank";
+  /** Every item, best first; ties keep input order. */
+  readonly ranking: readonly RankItem<T>[];
+  /** Number of pairs played, each asked in both option orders. */
+  readonly duels: number;
+  /** Mean over pairs of 1 − |P(a wins | a first) − P(a wins | b first)|. */
+  readonly position_consistency: number;
+}
+
 /** The answer type for a question, preserving its criteria keys. */
 export type ResultFor<T extends Question> = T extends NoulQuestion
   ? NoulResponse
@@ -121,9 +158,11 @@ export type ResultFor<T extends Question> = T extends NoulQuestion
     ? ScoreResponse<S>
     : T extends ChoiceQuestion<infer E>
       ? ChoiceResponse<E>
-      : never;
+      : T extends RankQuestion<infer R>
+        ? RankResponse<R>
+        : never;
 
-/** Token usage for a request. */
+/** Token usage for a request, summed over every request a Rank question needed. */
 export interface Usage {
   /** Number of input tokens used. */
   readonly input_tokens: number;
@@ -137,7 +176,7 @@ export interface SystemOneResult<Q extends Questions> {
   readonly model: string;
   /** Answers with types inferred from the supplied questions. */
   readonly answers: { readonly [K in keyof Q]: ResultFor<Q[K]> };
-  /** Token usage for the request. */
+  /** Token usage for the request, or summed over all requests when Rank questions need several. */
   readonly usage: Usage;
 }
 
@@ -166,8 +205,9 @@ export interface SystemOneRequest<Q extends Questions = Questions> {
   model?: string;
 }
 
-/** Request body for `POST /v1/systemone`, with the model resolved. */
-export interface SystemOneRequestPayload extends SystemOneRequest {
+/** Request body for `POST /v1/systemone`, with the model resolved and Rank questions expanded. */
+export interface SystemOneRequestPayload extends Omit<SystemOneRequest, "questions"> {
+  questions: { [name: string]: WireQuestion };
   model: string;
 }
 
