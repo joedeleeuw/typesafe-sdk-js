@@ -120,3 +120,24 @@ export class APIUserAbortError extends TypeSafeError {
     super(message, options);
   }
 }
+
+/**
+ * A request needed by a Rank question failed. `cause` is the first failure in request order, and
+ * `usage` sums every request that succeeded, across all rounds, before the run stopped.
+ */
+export class RankIncompleteError extends TypeSafeError {
+  /** Tokens used by the requests that succeeded. */
+  readonly usage: { readonly input_tokens: number; readonly output_tokens: number };
+
+  constructor(
+    usage: { readonly input_tokens: number; readonly output_tokens: number },
+    options?: ErrorOptions,
+  ) {
+    super(
+      `A request for a Rank question failed after ${usage.input_tokens} input and ` +
+        `${usage.output_tokens} output tokens were used.`,
+      options,
+    );
+    this.usage = usage;
+  }
+}

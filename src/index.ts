@@ -11,6 +11,7 @@ export {
   InternalServerError,
   NotFoundError,
   PermissionDeniedError,
+  RankIncompleteError,
   RateLimitError,
   TypeSafeError,
   UnprocessableEntityError,

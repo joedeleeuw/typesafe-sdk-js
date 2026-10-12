@@ -56,12 +56,13 @@ answers.best.duels; // pairs played
 answers.best.position_consistency; // mean 1 − |P(a wins | a first) − P(a wins | b first)|
 ```
 
-- `criteria` maps 2 to 255 labels to descriptions, like Choice options. Labels must not be integers such as `"3"`, because JavaScript objects reorder integer keys.
+- `instructions` are required. `criteria` maps 2 to 255 labels to descriptions, like Choice options. Labels must not be integers such as `"3"`, because JavaScript objects reorder integer keys.
 - `score` is the item's Bradley–Terry strength divided by the winner's: the winner scores exactly 1, and P(item beats the winner) = score / (1 + score). Ties keep input order.
-- The third argument, `maxDuels`, caps the pairs played. `null`, or any number covering every pair, plays every pair in one round. Otherwise the number must be at least the item count minus one: round 1 plays a cycle over a shuffle seeded by the sorted labels, and each later round plays up to n unplayed pairs whose outcome is most uncertain under the current fit.
-- Duels share requests with your other questions and are packed into as few requests per round as the token limit allows. `usage` sums every request.
+- The third argument, `maxDuels`, sets the number of pairs played. `null` plays every pair in one round. A number must be an integer from the item count minus one to the number of pairs. Round 1 then plays a cycle over a shuffle seeded by the sorted labels, and each later round plays up to n unplayed pairs whose outcome is most uncertain under the current fit.
+- Duels share requests with your other questions. Each round is packed into as few requests as the API's limits allow: 64,000 for the state plus all of a request's questions, and 32,000 for the state plus any one question. Sizes are counted in UTF-8 bytes of compact JSON, which bounds tokens whenever every token covers at least one byte. A question, or a Rank's largest possible duel, that cannot fit is rejected before anything is sent.
+- `usage` sums every request. If a request fails, the call rejects with `RankIncompleteError` after the round's other requests settle. Its `usage` covers every request that succeeded, and its `cause` is the first failure.
 
-The Python fork (`joedeleeuw/typesafe-sdk-python`) implements the same schedule and fit with the same field names.
+The Python fork (`joedeleeuw/typesafe-sdk-python`) implements the same validation, schedule, fit and packing with the same field names. Given the same duel probabilities, both forks return bit-identical schedules and scores.
 
 ## Documentation
 

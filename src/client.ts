@@ -5,6 +5,7 @@ import {
   APIError,
   APITimeoutError,
   APIUserAbortError,
+  RankIncompleteError,
   TypeSafeError,
 } from "./errors";
 import {
@@ -15,7 +16,7 @@ import {
   withLevel,
 } from "./logging";
 import { validateQuestions } from "./questions";
-import { duelPrefix, packQuestions, RankSession } from "./rank";
+import { checkQuestionSize, duelPrefix, packQuestions, RankSession } from "./rank";
 import { Models } from "./resources/models";
 import {
   DEFAULT_RETRY_POLICY,
@@ -337,7 +338,12 @@ export class TypeSafeClient {
     });
   }
 
-  /** Play every Rank question's duels round by round, then answer in the caller's question order. */
+  /**
+   * Play every Rank question's duels round by round, then answer in the caller's question order.
+   *
+   * @throws {TypeSafeError} A question, or a Rank's largest duel, cannot fit in a request with the state.
+   * @throws {RankIncompleteError} A request failed; carries the usage of every request that succeeded.
+   */
   #systemOneRanked<Q extends Questions>(
     request: SystemOneRequest<Q>,
     model: string,
@@ -350,7 +356,11 @@ export class TypeSafeClient {
     const sessions = entries
       .filter((entry): entry is [string, RankQuestion] => entry[1].type === "rank")
       .map(([name, question]) => [name, new RankSession(name, question)] as const);
-    const prefix = duelPrefix(wire.map(([name]) => name));
+    for (const [name, question] of wire) checkQuestionSize(request.state, name, question, false);
+    for (const [name, session] of sessions) {
+      checkQuestionSize(request.state, name, session.largestDuel(), true);
+    }
+    const prefix = duelPrefix(entries.map(([name]) => name));
 
     const run = async (): Promise<{ result: SystemOneResult<Q>; response: Response }> => {
       const answers = new Map<string, unknown>();
@@ -363,7 +373,7 @@ export class TypeSafeClient {
           for (const duel of session.nextDuels(prefix)) round.push([duel.id, duel.question]);
         }
         if (round.length === 0) break;
-        const replies = await Promise.all(
+        const replies = await Promise.allSettled(
           packQuestions(request.state, round).map((batch) =>
             this.#request<SystemOneResult<Questions>>("POST", "/v1/systemone", {
               ...options,
@@ -375,13 +385,20 @@ export class TypeSafeClient {
             }).withResponse(),
           ),
         );
-        for (const { data, response } of replies) {
+        let failure: { reason: unknown } | undefined;
+        for (const reply of replies) {
+          if (reply.status === "rejected") {
+            failure ??= { reason: reply.reason };
+            continue;
+          }
+          const { data, response } = reply.value;
           for (const [id, answer] of Object.entries(data.answers)) answers.set(id, answer);
           usage.input_tokens += data.usage.input_tokens;
           usage.output_tokens += data.usage.output_tokens;
           resolvedModel ??= data.model;
           last = response;
         }
+        if (failure) throw new RankIncompleteError({ ...usage }, { cause: failure.reason });
         for (const [, session] of sessions) session.record(answers);
         round = [];
       }

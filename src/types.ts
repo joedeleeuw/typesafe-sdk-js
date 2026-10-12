@@ -64,11 +64,11 @@ export interface ScoreQuestion<T extends ScoreCriteria = ScoreCriteria> {
  */
 export interface RankQuestion<T extends ChoiceCriteria = ChoiceCriteria> {
   type: "rank";
-  /** What makes one item better than another, as text, a JSON object, or an array. */
-  instructions?: EntryType;
+  /** What makes one item better than another, as text, a JSON object, or an array; required. */
+  instructions: Exclude<EntryType, null>;
   /** The items to order: 2 to 255 labels mapped to descriptions; labels must not be integers. */
   criteria: T;
-  /** Pairs to play; omitted or `null` plays every pair, otherwise at least one fewer than the items. */
+  /** Pairs to play: omitted or `null` plays every pair at once; otherwise an integer from n−1 to n(n−1)/2. */
   max_duels?: number | null;
 }
 

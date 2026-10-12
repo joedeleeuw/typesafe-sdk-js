@@ -2,54 +2,58 @@ import { TypeSafeError } from "./errors";
 import type {
   ChoiceCriteria,
   ChoiceQuestion,
-  ChoiceResponse,
+  EntryType,
   RankQuestion,
   RankResponse,
 } from "./types";
 
 /** The most options a Choice question accepts, and so the most items a Rank can order. */
-export const MAX_RANK_ITEMS = 255;
+const MAX_RANK_ITEMS = 255;
 
 const FIT_TOLERANCE = 1e-10;
 const FIT_MAX_ITERATIONS = 10_000;
+
+/** The API's limit on the state plus all questions of one request. Tokens never exceed UTF-8 bytes. */
+const REQUEST_BYTE_LIMIT = 64_000;
+/** The API's limit on the state plus the longest question of one request. */
+const QUESTION_BYTE_LIMIT = 32_000;
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
-/** Canonical array-index strings, which JavaScript objects enumerate before all other keys. */
-const isIntegerKey = (label: string): boolean =>
-  /^(0|[1-9]\d*)$/.test(label) && Number(label) < 2 ** 32 - 1;
-
-/** Reject Rank questions whose criteria cannot be scheduled as duels in both orders. */
+/** Reject Rank questions that cannot be scheduled as duels in both option orders. */
 export const validateRank = (name: string, question: RankQuestion): void => {
-  const { criteria, max_duels: maxDuels } = question;
+  const { criteria, instructions, max_duels: maxDuels } = question;
+  if (instructions === undefined || instructions === null) {
+    throw new TypeSafeError(`Rank question "${name}" requires instructions.`);
+  }
   if (typeof criteria !== "object" || criteria === null || Array.isArray(criteria)) {
-    throw new TypeSafeError(
-      `Rank question "${name}" has criteria that are not a map; ` +
-        "rank criteria must map each item's label to its description.",
-    );
+    throw new TypeSafeError(`Rank question "${name}" criteria must be an object.`);
   }
   const labels = Object.keys(criteria);
-  if (labels.length < 2 || labels.length > MAX_RANK_ITEMS) {
+  const n = labels.length;
+  if (n < 2 || n > MAX_RANK_ITEMS) {
     throw new TypeSafeError(
-      `Rank question "${name}" has ${labels.length} items; ` +
-        `a rank orders between 2 and ${MAX_RANK_ITEMS} items.`,
+      `Rank question "${name}" has ${n} criteria; between 2 and ${MAX_RANK_ITEMS} items are required.`,
     );
   }
-  const integerLabel = labels.find(isIntegerKey);
+  // JavaScript enumerates canonical array-index keys first, which would lose the input and duel order.
+  const integerLabel = labels.find(
+    (label) => /^(0|[1-9][0-9]*)$/.test(label) && Number(label) < 2 ** 32 - 1,
+  );
   if (integerLabel !== undefined) {
     throw new TypeSafeError(
       `Rank question "${name}" has the integer label "${integerLabel}"; ` +
-        "JavaScript objects reorder integer keys, which loses the input order and the duel order, " +
-        "so give each item a non-integer label.",
+        "Rank labels must not be integers, because JavaScript reorders integer object keys.",
     );
   }
   if (maxDuels === undefined || maxDuels === null) return;
-  if (!Number.isInteger(maxDuels) || maxDuels < labels.length - 1) {
+  const allPairs = (n * (n - 1)) / 2;
+  if (!Number.isInteger(maxDuels) || maxDuels < n - 1 || maxDuels > allPairs) {
     throw new TypeSafeError(
-      `Rank question "${name}" has max_duels ${maxDuels}; ` +
-        `ordering ${labels.length} items needs an integer of at least ${labels.length - 1}.`,
+      `Rank question "${name}" max_duels must be unset or an integer from ${n - 1} to ${allPairs} ` +
+        `for its ${n} items.`,
     );
   }
 };
@@ -93,8 +97,11 @@ const mulberry32 = (seed: number): (() => number) => {
   };
 };
 
-/** A cycle over the items in a shuffle seeded by the sorted labels, so the duel graph is connected. */
-const firstRound = (labels: readonly string[], budget: number): Pair[] => {
+/**
+ * A cycle over the items in a shuffle seeded by the sorted labels, so the duel graph is connected.
+ * A budget of one fewer than the item count drops the closing edge, leaving a path.
+ */
+const cycleRound = (labels: readonly string[], budget: number): Pair[] => {
   const order = [...labels].sort(compareCodePoints);
   const random = mulberry32(fnv1a(order.join("\u0000")));
   for (let i = order.length - 1; i > 0; i--) {
@@ -116,7 +123,7 @@ const firstRound = (labels: readonly string[], budget: number): Pair[] => {
 };
 
 /** Up to `n` unplayed pairs whose outcome is most uncertain under the current fit. */
-const nextRound = (
+const uncertainRound = (
   strengths: readonly number[],
   played: ReadonlySet<string>,
   budget: number,
@@ -126,9 +133,9 @@ const nextRound = (
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       if (played.has(pairKey(i, j))) continue;
-      const pi = strengths[i] as number;
-      const total = pi + (strengths[j] as number);
-      const p = total > 0 ? pi / total : 0.5;
+      const si = strengths[i] as number;
+      const total = si + (strengths[j] as number);
+      const p = total > 0 ? si / total : 0.5;
       candidates.push({ pair: [i, j], uncertainty: p * (1 - p) });
     }
   }
@@ -151,13 +158,16 @@ interface Outcome {
  * Bradley–Terry strengths fitted to soft outcomes by the MM algorithm (Hunter 2004), normalized to
  * sum to the number of items.
  *
+ * Every sum accumulates left to right in record order, operation for operation as in the Python
+ * fork, so both SDKs return bit-identical scores for identical duel probabilities.
+ *
  * @throws {TypeSafeError} The fit does not converge within the iteration cap.
  */
 const fitBradleyTerry = (n: number, outcomes: readonly Outcome[]): number[] => {
   const wins = new Array<number>(n).fill(0);
   for (const { i, j, win } of outcomes) {
     wins[i] = (wins[i] as number) + win;
-    wins[j] = (wins[j] as number) + 1 - win;
+    wins[j] = (wins[j] as number) + (1 - win);
   }
   let strengths = new Array<number>(n).fill(1);
   for (let iteration = 0; iteration < FIT_MAX_ITERATIONS; iteration++) {
@@ -168,15 +178,21 @@ const fitBradleyTerry = (n: number, outcomes: readonly Outcome[]): number[] => {
       denominators[j] = (denominators[j] as number) + inverse;
     }
     const next = wins.map((w, i) => w / (denominators[i] as number));
-    const total = next.reduce((sum, x) => sum + x, 0);
-    for (let i = 0; i < n; i++) next[i] = ((next[i] as number) * n) / total;
-    const largest = Math.max(...next);
-    const change = Math.max(...next.map((x, i) => Math.abs(x - (strengths[i] as number))));
+    let total = 0;
+    for (const x of next) total = total + x;
+    const scale = n / total;
+    for (let i = 0; i < n; i++) next[i] = (next[i] as number) * scale;
+    let change = 0;
+    let largest = 0;
+    for (let i = 0; i < n; i++) {
+      change = Math.max(change, Math.abs((next[i] as number) - (strengths[i] as number)));
+      largest = Math.max(largest, next[i] as number);
+    }
     strengths = next;
     if (change <= FIT_TOLERANCE * largest) return strengths;
   }
   throw new TypeSafeError(
-    `Bradley–Terry fit did not converge within ${FIT_MAX_ITERATIONS} iterations.`,
+    `The Bradley–Terry fit did not converge within ${FIT_MAX_ITERATIONS} iterations.`,
   );
 };
 
@@ -184,11 +200,22 @@ const fitBradleyTerry = (n: number, outcomes: readonly Outcome[]): number[] => {
 // Session
 // ---------------------------------------------------------------------------
 
-/** A Choice duel between two items, with the item listed first. */
+/** A Choice duel between two items. */
 export interface Duel {
   readonly id: string;
   readonly question: ChoiceQuestion;
 }
+
+const duelQuestion = (
+  instructions: EntryType | undefined,
+  criteria: ChoiceCriteria,
+  first: string,
+  second: string,
+): ChoiceQuestion => ({
+  type: "choice",
+  instructions,
+  criteria: { [first]: criteria[first] ?? null, [second]: criteria[second] ?? null },
+});
 
 /** Schedules duels for one Rank question round by round and fits the final ranking. */
 export class RankSession {
@@ -201,17 +228,34 @@ export class RankSession {
   #consistency = 0;
   #pending: { pair: Pair; ab: string; ba: string }[] = [];
 
+  /** Expects a question that passed `validateRank`. */
   constructor(name: string, question: RankQuestion) {
     this.#name = name;
     this.#question = question;
     this.#labels = Object.keys(question.criteria);
     const n = this.#labels.length;
-    const allPairs = (n * (n - 1)) / 2;
-    this.#budget = Math.min(question.max_duels ?? allPairs, allPairs);
+    this.#budget = question.max_duels ?? (n * (n - 1)) / 2;
+  }
+
+  /**
+   * The largest duel this Rank can schedule: the Choice over its two largest criteria entries,
+   * since a duel's size is the sum of its two entries.
+   */
+  largestDuel(): ChoiceQuestion {
+    const { criteria, instructions } = this.#question;
+    const sizes = this.#labels.map((label) => ({
+      label,
+      bytes: jsonBytes({ [label]: criteria[label] ?? null }),
+    }));
+    sizes.sort((x, y) => y.bytes - x.bytes);
+    return duelQuestion(instructions, criteria, sizes[0]?.label ?? "", sizes[1]?.label ?? "");
   }
 
   /**
    * The next round's duels, both orders of each pair, or none once the budget is spent.
+   *
+   * Without `max_duels` round 1 plays every pair. With it, round 1 is a seeded cycle and each later
+   * round plays the most uncertain unplayed pairs under the current fit.
    *
    * @param prefix - Id prefix that no caller question id starts with.
    */
@@ -221,27 +265,21 @@ export class RankSession {
     if (remaining <= 0) return [];
     let pairs: Pair[];
     if (this.#played.size > 0) {
-      pairs = nextRound(fitBradleyTerry(n, this.#outcomes), this.#played, remaining);
-    } else if (this.#budget === (n * (n - 1)) / 2) {
+      pairs = uncertainRound(fitBradleyTerry(n, this.#outcomes), this.#played, remaining);
+    } else if (this.#question.max_duels === undefined || this.#question.max_duels === null) {
       pairs = [];
       for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
     } else {
-      pairs = firstRound(this.#labels, remaining);
+      pairs = cycleRound(this.#labels, remaining);
     }
-    const criteria = this.#question.criteria;
-    const instructions = this.#question.instructions ?? null;
+    const { criteria, instructions } = this.#question;
     const duels: Duel[] = [];
     this.#pending = pairs.map((pair) => {
       const [a, b] = [this.#labels[pair[0]] as string, this.#labels[pair[1]] as string];
       const id = `${prefix}${this.#name}:${pair[0]}:${pair[1]}`;
-      const duel = (first: string, second: string): ChoiceQuestion => ({
-        type: "choice",
-        instructions,
-        criteria: { [first]: criteria[first] ?? null, [second]: criteria[second] ?? null },
-      });
       duels.push(
-        { id: `${id}:ab`, question: duel(a, b) },
-        { id: `${id}:ba`, question: duel(b, a) },
+        { id: `${id}:ab`, question: duelQuestion(instructions, criteria, a, b) },
+        { id: `${id}:ba`, question: duelQuestion(instructions, criteria, b, a) },
       );
       return { pair, ab: `${id}:ab`, ba: `${id}:ba` };
     });
@@ -253,10 +291,10 @@ export class RankSession {
     for (const { pair, ab, ba } of this.#pending) {
       const a = this.#labels[pair[0]] as string;
       const b = this.#labels[pair[1]] as string;
-      const first = winProbability(answers.get(ab), a, b, ab);
-      const second = winProbability(answers.get(ba), a, b, ba);
+      const first = winProbability(answers.get(ab), a, b, this.#name);
+      const second = winProbability(answers.get(ba), a, b, this.#name);
       this.#outcomes.push({ i: pair[0], j: pair[1], win: (first + second) / 2 });
-      this.#consistency += 1 - Math.abs(first - second);
+      this.#consistency = this.#consistency + (1 - Math.abs(first - second));
       this.#played.add(pairKey(...pair));
     }
     this.#pending = [];
@@ -265,7 +303,8 @@ export class RankSession {
   /** The fitted ranking, best first, with Luce odds against the winner as scores. */
   answer<T extends ChoiceCriteria>(): RankResponse<T> {
     const strengths = fitBradleyTerry(this.#labels.length, this.#outcomes);
-    const best = Math.max(...strengths);
+    let best = 0;
+    for (const s of strengths) best = Math.max(best, s);
     const ranking = this.#labels
       .map((label, i) => ({
         label: label as keyof T & string,
@@ -282,12 +321,16 @@ export class RankSession {
 }
 
 /** P(a wins) in one duel, normalized over its two options. */
-const winProbability = (answer: unknown, a: string, b: string, id: string): number => {
-  const probabilities = (answer as Partial<ChoiceResponse> | undefined)?.probabilities;
-  const pa = probabilities?.[a];
-  const pb = probabilities?.[b];
+const winProbability = (answer: unknown, a: string, b: string, name: string): number => {
+  const probabilities =
+    typeof answer === "object" && answer !== null && "probabilities" in answer
+      ? answer.probabilities
+      : undefined;
+  const known = typeof probabilities === "object" && probabilities !== null;
+  const pa: unknown = known ? Reflect.get(probabilities, a) : undefined;
+  const pb: unknown = known ? Reflect.get(probabilities, b) : undefined;
   if (typeof pa !== "number" || typeof pb !== "number" || !(pa + pb > 0)) {
-    throw new TypeSafeError(`The API returned no usable probabilities for rank duel "${id}".`);
+    throw new TypeSafeError(`The response is missing a duel answer for Rank question "${name}".`);
   }
   return pa / (pa + pb);
 };
@@ -299,31 +342,56 @@ export const duelPrefix = (ids: readonly string[]): string => {
   return prefix;
 };
 
-/** Estimated tokens for a JSON value: legal and other dense text runs near two UTF-8 bytes per token. */
-const estimateTokens = (value: unknown): number =>
-  Math.ceil(new TextEncoder().encode(JSON.stringify(value) ?? "").length / 2);
+// ---------------------------------------------------------------------------
+// Packing
+// ---------------------------------------------------------------------------
 
-/** Estimated tokens per request, below the API's 64k limit on state plus all questions. */
-const REQUEST_TOKEN_BUDGET = 60_000;
+/** UTF-8 bytes of compact JSON: an upper bound on tokens, since every token covers at least one byte. */
+const jsonBytes = (value: unknown): number =>
+  new TextEncoder().encode(JSON.stringify(value) ?? "").length;
 
-/** Pack questions in order into as few requests as the token budget allows, at least one each. */
+/**
+ * Reject a question that cannot fit in any request with the state.
+ *
+ * @throws {TypeSafeError} The state and the question exceed the per-question limit.
+ */
+export const checkQuestionSize = (
+  state: unknown,
+  name: string,
+  question: unknown,
+  isRank: boolean,
+): void => {
+  const bytes = jsonBytes(state) + jsonBytes(question);
+  if (bytes <= QUESTION_BYTE_LIMIT) return;
+  const subject = isRank
+    ? `Rank question "${name}" has a duel that takes`
+    : `Question "${name}" takes`;
+  throw new TypeSafeError(
+    `${subject} ${bytes} bytes with the state, over the ${QUESTION_BYTE_LIMIT}-byte limit for the state and one question.`,
+  );
+};
+
+/**
+ * Pack questions in order into as few requests as the per-request limit allows. Each question must
+ * already have passed `checkQuestionSize`, so it fits in a request of its own.
+ */
 export const packQuestions = <T>(
   state: unknown,
   questions: readonly (readonly [string, T])[],
 ): (readonly [string, T])[][] => {
-  const base = estimateTokens(state);
+  const base = jsonBytes(state);
   const batches: (readonly [string, T])[][] = [];
   let batch: (readonly [string, T])[] = [];
   let used = base;
   for (const entry of questions) {
-    const cost = estimateTokens(entry[1]);
-    if (batch.length > 0 && used + cost > REQUEST_TOKEN_BUDGET) {
+    const bytes = jsonBytes(entry[1]);
+    if (batch.length > 0 && used + bytes > REQUEST_BYTE_LIMIT) {
       batches.push(batch);
       batch = [];
       used = base;
     }
     batch.push(entry);
-    used += cost;
+    used += bytes;
   }
   if (batch.length > 0) batches.push(batch);
   return batches;

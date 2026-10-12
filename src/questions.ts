@@ -67,20 +67,16 @@ export const choice = <const T extends ChoiceCriteria>(
 /**
  * Create a question that orders items by pairwise duels, fitted with Bradley–Terry.
  *
- * @param instructions - What makes one item better, as text, a JSON object or array, or `null`.
+ * @param instructions - What makes one item better, as text, a JSON object or array; required.
  * @param criteria - 2 to 255 non-integer labels mapped to descriptions, or `null` for undescribed items.
- * @param maxDuels - Pairs to play; `null` plays every pair, otherwise at least one fewer than the items.
+ * @param maxDuels - Pairs to play; `null` plays every pair at once, otherwise an integer from one fewer
+ *   than the items to every pair, played as a seeded cycle and then rounds of the most uncertain pairs.
  */
 export const rank = <const T extends ChoiceCriteria>(
-  instructions: EntryType,
+  instructions: Exclude<EntryType, null>,
   criteria: T,
   maxDuels: number | null = null,
-): RankQuestion<T> => {
-  if (Array.isArray(criteria)) {
-    throw new TypeSafeError("Rank criteria must be a map of labels to descriptions, not a list.");
-  }
-  return { type: "rank", instructions, criteria, max_duels: maxDuels };
-};
+): RankQuestion<T> => ({ type: "rank", instructions, criteria, max_duels: maxDuels });
 
 // ---------------------------------------------------------------------------
 // Validation
