@@ -222,7 +222,7 @@ export class RankSession {
     let pairs: Pair[];
     if (this.#played.size > 0) {
       pairs = nextRound(fitBradleyTerry(n, this.#outcomes), this.#played, remaining);
-    } else if (this.#question.max_duels === undefined || this.#question.max_duels === null) {
+    } else if (this.#budget === (n * (n - 1)) / 2) {
       pairs = [];
       for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) pairs.push([i, j]);
     } else {
@@ -299,9 +299,9 @@ export const duelPrefix = (ids: readonly string[]): string => {
   return prefix;
 };
 
-/** Estimated tokens for a JSON value. */
+/** Estimated tokens for a JSON value: legal and other dense text runs near two UTF-8 bytes per token. */
 const estimateTokens = (value: unknown): number =>
-  Math.ceil((JSON.stringify(value) ?? "").length / 3);
+  Math.ceil(new TextEncoder().encode(JSON.stringify(value) ?? "").length / 2);
 
 /** Estimated tokens per request, below the API's 64k limit on state plus all questions. */
 const REQUEST_TOKEN_BUDGET = 60_000;

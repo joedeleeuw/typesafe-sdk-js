@@ -58,7 +58,7 @@ answers.best.position_consistency; // mean 1 − |P(a wins | a first) − P(a wi
 
 - `criteria` maps 2 to 255 labels to descriptions, like Choice options. Labels must not be integers such as `"3"`, because JavaScript objects reorder integer keys.
 - `score` is the item's Bradley–Terry strength divided by the winner's: the winner scores exactly 1, and P(item beats the winner) = score / (1 + score). Ties keep input order.
-- The third argument, `maxDuels`, caps the pairs played. `null` plays every pair. A number must be at least the item count minus one. Round 1 then plays a cycle over a shuffle seeded by the sorted labels, and each later round plays up to n unplayed pairs whose outcome is most uncertain under the current fit.
+- The third argument, `maxDuels`, caps the pairs played. `null`, or any number covering every pair, plays every pair in one round. Otherwise the number must be at least the item count minus one: round 1 plays a cycle over a shuffle seeded by the sorted labels, and each later round plays up to n unplayed pairs whose outcome is most uncertain under the current fit.
 - Duels share requests with your other questions and are packed into as few requests per round as the token limit allows. `usage` sums every request.
 
 The Python fork (`joedeleeuw/typesafe-sdk-python`) implements the same schedule and fit with the same field names.
